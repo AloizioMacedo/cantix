@@ -38,7 +38,7 @@ impl EventHandler for Bot {
     async fn interaction_create(&self, ctx: Context, interaction: Interaction) {
         if let Interaction::ApplicationCommand(command) = interaction {
             let response_content = match command.data.name.as_str() {
-                "hello" => "hello".to_owned(),
+                "hello" => "Hello!".to_owned(),
                 command => unreachable!("Unknown command: {}", command),
             };
 
