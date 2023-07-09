@@ -1,5 +1,5 @@
 use ::serenity::prelude::GatewayIntents;
-use poise::serenity_prelude as serenity;
+use chatgpt::prelude::ChatGPT;
 use shuttle_poise::ShuttlePoise;
 use shuttle_runtime::Context as _;
 use shuttle_secrets::SecretStore;
@@ -23,10 +23,19 @@ async fn hello(
     Ok(())
 }
 
+/// Ask something to ChatGPT!
 #[poise::command(slash_command)]
-async fn heyho(ctx: Context<'_>) -> Result<(), Error> {
-    ctx.say("HEYOH!").await?;
-    println!("heyho");
+async fn ask_gpt(ctx: Context<'_>, prompt: String) -> Result<(), Error> {
+    dotenvy::from_filename("Secrets.toml").unwrap();
+
+    let client =
+        ChatGPT::new(std::env::var("GPT_API_KEY").expect("GPT_API_KEY should be in Secrets.toml"))
+            .expect("ChatGPT API key should be valid.");
+
+    let response = client.send_message(&prompt).await?;
+
+    ctx.say(&response.message().content).await?;
+
     Ok(())
 }
 
@@ -39,7 +48,7 @@ async fn poise(#[shuttle_secrets::Secrets] secret_store: SecretStore) -> Shuttle
 
     let framework = poise::Framework::builder()
         .options(poise::FrameworkOptions {
-            commands: vec![hello(), heyho()],
+            commands: vec![hello(), ask_gpt()],
             ..Default::default()
         })
         .token(discord_token)
