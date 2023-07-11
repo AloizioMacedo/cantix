@@ -94,8 +94,20 @@ async fn get_winrate(ctx: Context<'_>, name: String) -> Result<(), Error> {
 
     let data = data.unwrap().unwrap();
 
-    let wins_total: f64 = data.heroStats.winMonth.iter().map(|x| x.winCount).sum();
-    let total: f64 = data.heroStats.winMonth.iter().map(|x| x.matchCount).sum();
+    let wins_total: f64 = data
+        .heroStats
+        .winMonth
+        .iter()
+        .map(|x| x.winCount)
+        .next()
+        .unwrap();
+    let total: f64 = data
+        .heroStats
+        .winMonth
+        .iter()
+        .map(|x| x.matchCount)
+        .next()
+        .unwrap();
 
     ctx.say(format!(
         "{} has {:.2}% winrate this month.",
