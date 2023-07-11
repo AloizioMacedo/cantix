@@ -55,7 +55,7 @@ struct DataGL {
 #[derive(Deserialize, Debug)]
 #[allow(non_snake_case)]
 struct HeroStats {
-    winMonth: Vec<HeroWinCount>,
+    winWeek: Vec<HeroWinCount>,
 }
 
 #[derive(Deserialize, Debug)]
@@ -65,13 +65,14 @@ struct HeroWinCount {
     matchCount: f64,
 }
 
-/// Get hero winrate this month.
+/// Get hero winrate in the last 4 weeks.
 #[poise::command(slash_command)]
 async fn get_winrate(ctx: Context<'_>, name: String) -> Result<(), Error> {
     dotenvy::from_filename("Secrets.toml").unwrap();
     let endpoint = "https://api.stratz.com/graphql";
 
-    let x = r#"query myQuery($id: Short) {heroStats {winMonth(heroIds: [$id]) {heroId winCount matchCount} }}"#;
+    let x =
+        r#"query myQuery($id: Short) {heroStats {winWeek(heroIds: [$id]) {winCount matchCount} }}"#;
 
     let headers: HashMap<&str, String> = [(
         "authorization",
@@ -96,18 +97,18 @@ async fn get_winrate(ctx: Context<'_>, name: String) -> Result<(), Error> {
 
     let wins_total: f64 = data
         .heroStats
-        .winMonth
+        .winWeek
         .iter()
+        .take(4)
         .map(|x| x.winCount)
-        .next()
-        .unwrap();
+        .sum();
     let total: f64 = data
         .heroStats
-        .winMonth
+        .winWeek
         .iter()
+        .take(4)
         .map(|x| x.matchCount)
-        .next()
-        .unwrap();
+        .sum();
 
     ctx.say(format!(
         "{} has {:.2}% winrate this month.",
