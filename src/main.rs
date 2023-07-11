@@ -171,11 +171,11 @@ struct Var {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::HashMap, env};
+    use std::collections::HashMap;
 
     use indicium::simple::SearchIndex;
 
-    use crate::{DataGL, HeroData, Var};
+    use crate::HeroData;
 
     #[tokio::test]
     async fn get_hero_data() {
@@ -205,24 +205,24 @@ mod tests {
 
     #[tokio::test]
     async fn it_works() {
-        dotenvy::from_filename("Secrets.toml").unwrap();
-        let endpoint = "https://api.stratz.com/graphql";
+        // dotenvy::from_filename("Secrets.toml").unwrap();
+        // let endpoint = "https://api.stratz.com/graphql";
 
-        let x = r#"query myQuery($id: Short) {heroStats {winMonth(heroIds: [$id]) {heroId winCount matchCount} }}"#;
+        // let x = r#"query myQuery($id: Short) {heroStats {winMonth(heroIds: [$id]) {heroId winCount matchCount} }}"#;
 
-        println!("{}", env::var("DOTA_API").unwrap());
-        let headers: HashMap<&str, String> = [(
-            "authorization",
-            format!("Bearer {}", env::var("DOTA_API").unwrap()),
-        )]
-        .into();
-        let client = gql_client::Client::new_with_headers(endpoint, headers);
+        // println!("{}", env::var("DOTA_API").unwrap());
+        // let headers: HashMap<&str, String> = [(
+        //     "authorization",
+        //     format!("Bearer {}", env::var("DOTA_API").unwrap()),
+        // )]
+        // .into();
+        // let client = gql_client::Client::new_with_headers(endpoint, headers);
 
-        let data = client
-            .query_with_vars::<DataGL, Var>(x, Var { id: 2 })
-            .await;
+        // let data = client
+        //     .query_with_vars::<DataGL, Var>(x, Var { id: 2 })
+        //     .await;
 
-        println!("{:?}", data.as_ref().err());
-        println!("{:?}", data);
+        // println!("{:?}", data.as_ref().err());
+        // println!("{:?}", data);
     }
 }
