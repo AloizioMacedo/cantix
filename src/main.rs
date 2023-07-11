@@ -1,15 +1,16 @@
-use std::{collections::HashMap, env, ops::Deref, sync::Arc};
+use std::{collections::HashMap, env};
 
 use ::serenity::prelude::GatewayIntents;
 use chatgpt::prelude::ChatGPT;
+use indicium::simple::SearchIndex;
 use serde::{Deserialize, Serialize};
 use shuttle_poise::ShuttlePoise;
 use shuttle_runtime::Context as _;
 use shuttle_secrets::SecretStore;
-use songbird::{SerenityInit, Songbird, SongbirdKey};
 
 struct Data {
-    songbird: Arc<Songbird>,
+    search_index: SearchIndex<u8>,
+    heroes: HashMap<u8, String>,
 } // User data, which is stored and accessible in all command invocations
 type Error = Box<dyn std::error::Error + Send + Sync>;
 type Context<'a> = poise::Context<'a, Data, Error>;
@@ -46,25 +47,27 @@ async fn ask_gpt(ctx: Context<'_>, prompt: String) -> Result<(), Error> {
 }
 
 #[derive(Deserialize, Debug)]
+#[allow(non_snake_case)]
 struct DataGL {
     heroStats: HeroStats,
 }
 
 #[derive(Deserialize, Debug)]
+#[allow(non_snake_case)]
 struct HeroStats {
     winMonth: Vec<HeroWinCount>,
 }
 
 #[derive(Deserialize, Debug)]
+#[allow(non_snake_case)]
 struct HeroWinCount {
-    heroId: u8,
     winCount: f64,
     matchCount: f64,
 }
 
-/// Get hero winrate this month by ID.
+/// Get hero winrate this month.
 #[poise::command(slash_command)]
-async fn get_winrate(ctx: Context<'_>, id: u8) -> Result<(), Error> {
+async fn get_winrate(ctx: Context<'_>, name: String) -> Result<(), Error> {
     dotenvy::from_filename("Secrets.toml").unwrap();
     let endpoint = "https://api.stratz.com/graphql";
 
@@ -77,6 +80,16 @@ async fn get_winrate(ctx: Context<'_>, id: u8) -> Result<(), Error> {
     .into();
     let client = gql_client::Client::new_with_headers(endpoint, headers);
 
+    let search_index = &ctx.data().search_index;
+    let heroes = &ctx.data().heroes;
+
+    let id = if let Some(hero_id) = search_index.search(&name).first() {
+        **hero_id
+    } else {
+        ctx.say("Hero not found!").await?;
+        return Ok(());
+    };
+
     let data = client.query_with_vars::<DataGL, Var>(x, Var { id }).await;
 
     let data = data.unwrap().unwrap();
@@ -85,69 +98,14 @@ async fn get_winrate(ctx: Context<'_>, id: u8) -> Result<(), Error> {
     let total: f64 = data.heroStats.winMonth.iter().map(|x| x.matchCount).sum();
 
     ctx.say(format!(
-        "Hero has {:.2}% winrate this month.",
+        "{} has {:.2}% winrate this month.",
+        heroes.get(&id).expect(
+            r#"The result from the search should
+            be an index in the heroes hashmap."#
+        ),
         100. * wins_total / total
     ))
     .await?;
-
-    Ok(())
-}
-
-#[poise::command(slash_command)]
-async fn join(ctx: Context<'_>) -> Result<(), Error> {
-    // let guild = ctx.guild().unwrap();
-    let guild_id = ctx.partial_guild().await.unwrap().id;
-    let channel_id = ctx.channel_id();
-
-    // let channel_id = guild
-    //     .voice_states
-    //     .get(&ctx.author().id)
-    //     .and_then(|voice_state| voice_state.channel_id);
-
-    // let connect_to = match channel_id {
-    //     Some(channel) => channel,
-    //     None => {
-    //         return Ok(());
-    //     }
-    // };
-
-    let manager = &ctx.data().songbird;
-
-    // let _handler = manager.join(guild_id, connect_to).await;
-    let _handler = manager.join(guild_id, channel_id).await;
-
-    Ok(())
-}
-
-/// Play a song!
-#[poise::command(slash_command, guild_only)]
-async fn play(ctx: Context<'_>, url: String) -> Result<(), Error> {
-    println!("{:?}", ctx.author());
-    println!("{:?}", ctx.partial_guild().await);
-
-    let partial_guild_id = ctx.partial_guild().await.unwrap().id;
-
-    // let manager = songbird::get(ctx.serenity_context())
-    //     .await
-    //     .expect("Songbird Voice client placed in at initialisation.")
-    //     .clone();
-
-    let manager = &ctx.data().songbird;
-
-    if let Some(handler_lock) = manager.get(partial_guild_id) {
-        let mut handler = handler_lock.lock().await;
-
-        let source = match songbird::ytdl(&url).await {
-            Ok(source) => source,
-            Err(why) => {
-                println!("Err starting source: {:?}", why);
-
-                return Ok(());
-            }
-        };
-
-        handler.play_source(source);
-    }
 
     Ok(())
 }
@@ -158,6 +116,24 @@ async fn poise(#[shuttle_secrets::Secrets] secret_store: SecretStore) -> Shuttle
     let discord_token = secret_store
         .get("DISCORD_TOKEN")
         .context("'DISCORD_TOKEN' was not found")?;
+
+    let heroes: Vec<HeroData> = reqwest::get("https://api.opendota.com/api/heroes")
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    let heroes: HashMap<u8, String> = heroes
+        .into_iter()
+        .map(|x| (x.id, x.localized_name))
+        .collect();
+
+    let mut search_index: SearchIndex<u8> = SearchIndex::default();
+
+    heroes
+        .iter()
+        .for_each(|(key, value)| search_index.insert(key, value));
 
     let framework = poise::Framework::builder()
         .options(poise::FrameworkOptions {
@@ -170,7 +146,8 @@ async fn poise(#[shuttle_secrets::Secrets] secret_store: SecretStore) -> Shuttle
             Box::pin(async move {
                 poise::builtins::register_globally(ctx, &framework.options().commands).await?;
                 Ok(Data {
-                    songbird: Songbird::serenity(),
+                    search_index,
+                    heroes,
                 })
             })
         })
@@ -181,7 +158,11 @@ async fn poise(#[shuttle_secrets::Secrets] secret_store: SecretStore) -> Shuttle
     Ok(framework.into())
 }
 
-type Short = String;
+#[derive(Deserialize, Debug)]
+struct HeroData {
+    id: u8,
+    localized_name: String,
+}
 
 #[derive(Serialize)]
 struct Var {
@@ -192,9 +173,35 @@ struct Var {
 mod tests {
     use std::{collections::HashMap, env};
 
-    use serenity::json::Value;
+    use indicium::simple::SearchIndex;
 
-    use crate::{DataGL, Var};
+    use crate::{DataGL, HeroData, Var};
+
+    #[tokio::test]
+    async fn get_hero_data() {
+        let heroes: Vec<HeroData> = reqwest::get("https://api.opendota.com/api/heroes")
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+
+        let heroes: HashMap<u8, String> = heroes
+            .into_iter()
+            .map(|x| (x.id, x.localized_name))
+            .collect();
+
+        let mut search_index: SearchIndex<u8> = SearchIndex::default();
+
+        heroes
+            .iter()
+            .for_each(|(key, value)| search_index.insert(key, value));
+
+        println!("{:?}", heroes);
+        let h = search_index.search("anti-mage");
+
+        println!("{:?}", h);
+    }
 
     #[tokio::test]
     async fn it_works() {
