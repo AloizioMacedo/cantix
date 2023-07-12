@@ -1,4 +1,4 @@
-use std::{collections::HashMap, env};
+use std::collections::HashMap;
 
 use ::serenity::prelude::GatewayIntents;
 use cantix::matchup;
@@ -12,6 +12,7 @@ use shuttle_secrets::SecretStore;
 struct Data {
     search_index: SearchIndex<u8>,
     heroes: HashMap<u8, String>,
+    dota_token: String,
 } // User data, which is stored and accessible in all command invocations
 type Error = Box<dyn std::error::Error + Send + Sync>;
 type Context<'a> = poise::Context<'a, Data, Error>;
@@ -107,7 +108,7 @@ struct HeroData {
 /// Get "best with", "best against" and "worst against".
 #[poise::command(slash_command)]
 async fn get_synergies_and_counters(ctx: Context<'_>, name: String) -> Result<(), Error> {
-    dotenvy::from_filename("Secrets.toml").unwrap();
+    let dota_token = &ctx.data().dota_token;
     let endpoint = "https://api.stratz.com/graphql";
 
     let query_advantage = r#"query MyQuery($id: Short) {
@@ -140,11 +141,8 @@ async fn get_synergies_and_counters(ctx: Context<'_>, name: String) -> Result<()
         }
       }"#;
 
-    let headers: HashMap<&str, String> = [(
-        "authorization",
-        format!("Bearer {}", env::var("DOTA_API").unwrap()),
-    )]
-    .into();
+    let headers: HashMap<&str, String> =
+        [("authorization", format!("Bearer {}", dota_token))].into();
 
     let client = gql_client::Client::new_with_headers(endpoint, headers);
 
@@ -250,7 +248,7 @@ async fn get_synergies_and_counters(ctx: Context<'_>, name: String) -> Result<()
 /// Get hero static data.
 #[poise::command(slash_command)]
 async fn get_hero(ctx: Context<'_>, name: String) -> Result<(), Error> {
-    dotenvy::from_filename("Secrets.toml").unwrap();
+    let dota_token = &ctx.data().dota_token;
     let endpoint = "https://api.stratz.com/graphql";
 
     let query = r#"query myQuery($id: Short!) {
@@ -279,11 +277,8 @@ async fn get_hero(ctx: Context<'_>, name: String) -> Result<(), Error> {
             }
           }"#;
 
-    let headers: HashMap<&str, String> = [(
-        "authorization",
-        format!("Bearer {}", env::var("DOTA_API").unwrap()),
-    )]
-    .into();
+    let headers: HashMap<&str, String> =
+        [("authorization", format!("Bearer {}", dota_token))].into();
 
     let client = gql_client::Client::new_with_headers(endpoint, headers);
 
@@ -366,17 +361,14 @@ async fn get_hero(ctx: Context<'_>, name: String) -> Result<(), Error> {
 /// Get hero winrate in the last 4 weeks.
 #[poise::command(slash_command)]
 async fn get_winrate(ctx: Context<'_>, name: String) -> Result<(), Error> {
-    dotenvy::from_filename("Secrets.toml").unwrap();
+    let dota_token = &ctx.data().dota_token;
     let endpoint = "https://api.stratz.com/graphql";
 
     let query =
         r#"query myQuery($id: Short) {heroStats {winWeek(heroIds: [$id]) {winCount matchCount} }}"#;
 
-    let headers: HashMap<&str, String> = [(
-        "authorization",
-        format!("Bearer {}", env::var("DOTA_API").unwrap()),
-    )]
-    .into();
+    let headers: HashMap<&str, String> =
+        [("authorization", format!("Bearer {}", dota_token))].into();
     let client = gql_client::Client::new_with_headers(endpoint, headers);
 
     let search_index = &ctx.data().search_index;
@@ -429,6 +421,9 @@ async fn poise(#[shuttle_secrets::Secrets] secret_store: SecretStore) -> Shuttle
     let discord_token = secret_store
         .get("DISCORD_TOKEN")
         .context("'DISCORD_TOKEN' was not found")?;
+    let dota_token = secret_store
+        .get("DOTA_API")
+        .context("'DOTA_API' was not found.")?;
 
     let heroes: Vec<HeroDataOpenAi> = reqwest::get("https://api.opendota.com/api/heroes")
         .await
@@ -466,6 +461,7 @@ async fn poise(#[shuttle_secrets::Secrets] secret_store: SecretStore) -> Shuttle
                 Ok(Data {
                     search_index,
                     heroes,
+                    dota_token,
                 })
             })
         })
