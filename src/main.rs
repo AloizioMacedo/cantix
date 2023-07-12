@@ -105,12 +105,40 @@ struct HeroData {
     moveTurnRate: f32,
 }
 
+async fn query_stratz<T>(
+    dota_token: &str,
+    name: &str,
+    query: &str,
+    search_index: &SearchIndex<u8>,
+) -> Result<(T, u8), &'static str>
+where
+    T: for<'de> Deserialize<'de>,
+{
+    let endpoint = "https://api.stratz.com/graphql";
+
+    let headers: HashMap<&str, String> =
+        [("authorization", format!("Bearer {}", dota_token))].into();
+
+    let client = gql_client::Client::new_with_headers(endpoint, headers);
+
+    let id = if let Some(hero_id) = search_index.search(name).first() {
+        **hero_id
+    } else {
+        return Err("Hero not found!");
+    };
+
+    let data = client
+        .query_with_vars::<T, Var>(query, Var { id })
+        .await
+        .expect("Should be able to get the query")
+        .expect("Query should be non-null.");
+
+    Ok((data, id))
+}
+
 /// Get "best with", "best against" and "worst against".
 #[poise::command(slash_command)]
 async fn get_synergies_and_counters(ctx: Context<'_>, name: String) -> Result<(), Error> {
-    let dota_token = &ctx.data().dota_token;
-    let endpoint = "https://api.stratz.com/graphql";
-
     let query_advantage = r#"query MyQuery($id: Short) {
         heroStats {
           matchUp(heroId: $id, orderBy: 2) {
@@ -141,30 +169,21 @@ async fn get_synergies_and_counters(ctx: Context<'_>, name: String) -> Result<()
         }
       }"#;
 
-    let headers: HashMap<&str, String> =
-        [("authorization", format!("Bearer {}", dota_token))].into();
+    let (data_advantage, _) = query_stratz::<matchup::HeroQuery>(
+        &ctx.data().dota_token,
+        &name,
+        query_advantage,
+        &ctx.data().search_index,
+    )
+    .await?;
 
-    let client = gql_client::Client::new_with_headers(endpoint, headers);
-
-    let search_index = &ctx.data().search_index;
-    let heroes = &ctx.data().heroes;
-
-    let id = if let Some(hero_id) = search_index.search(&name).first() {
-        **hero_id
-    } else {
-        ctx.say("Hero not found!").await?;
-        return Ok(());
-    };
-
-    let data_advantage = client
-        .query_with_vars::<matchup::HeroQuery, Var>(query_advantage, Var { id })
-        .await;
-    let data_disadvantage = client
-        .query_with_vars::<matchup::HeroQuery, Var>(query_disadvantage, Var { id })
-        .await;
-
-    let data_advantage = data_advantage.unwrap().unwrap();
-    let data_disadvantage = data_disadvantage.unwrap().unwrap();
+    let (data_disadvantage, id) = query_stratz::<matchup::HeroQuery>(
+        &ctx.data().dota_token,
+        &name,
+        query_disadvantage,
+        &ctx.data().search_index,
+    )
+    .await?;
 
     let hero = data_advantage.heroStats.matchUp.into_iter().next().unwrap();
     let hero_disadvantage = data_disadvantage
@@ -186,6 +205,7 @@ async fn get_synergies_and_counters(ctx: Context<'_>, name: String) -> Result<()
     let with = &with[0..5];
     let counters = &counters[0..5];
 
+    let heroes = &ctx.data().heroes;
     ctx.say(format!(
         "
         > # {}
@@ -248,9 +268,6 @@ async fn get_synergies_and_counters(ctx: Context<'_>, name: String) -> Result<()
 /// Get hero static data.
 #[poise::command(slash_command)]
 async fn get_hero(ctx: Context<'_>, name: String) -> Result<(), Error> {
-    let dota_token = &ctx.data().dota_token;
-    let endpoint = "https://api.stratz.com/graphql";
-
     let query = r#"query myQuery($id: Short!) {
             constants {
               hero(id: $id) {
@@ -276,27 +293,14 @@ async fn get_hero(ctx: Context<'_>, name: String) -> Result<(), Error> {
               }
             }
           }"#;
+    let (data, id) = query_stratz::<ConstantGL>(
+        &ctx.data().dota_token,
+        &name,
+        query,
+        &ctx.data().search_index,
+    )
+    .await?;
 
-    let headers: HashMap<&str, String> =
-        [("authorization", format!("Bearer {}", dota_token))].into();
-
-    let client = gql_client::Client::new_with_headers(endpoint, headers);
-
-    let search_index = &ctx.data().search_index;
-    let heroes = &ctx.data().heroes;
-
-    let id = if let Some(hero_id) = search_index.search(&name).first() {
-        **hero_id
-    } else {
-        ctx.say("Hero not found!").await?;
-        return Ok(());
-    };
-
-    let data = client
-        .query_with_vars::<ConstantGL, Var>(query, Var { id })
-        .await;
-
-    let data = data.unwrap().unwrap();
     let hero_data = data.constants.hero.stats;
 
     ctx.say(format!(
@@ -318,7 +322,7 @@ async fn get_hero(ctx: Context<'_>, name: String) -> Result<(), Error> {
         > Speed: {}
         > Turn Rate: {}
         ",
-        heroes.get(&id).unwrap(),
+        ctx.data().heroes.get(&id).unwrap(),
         120 + 22 * hero_data.strengthBase,
         hero_data.hpRegen,
         75 + 12 * hero_data.intelligenceBase,
@@ -341,51 +345,26 @@ async fn get_hero(ctx: Context<'_>, name: String) -> Result<(), Error> {
     ))
     .await?;
 
-    // ctx.send(|m| {
-    //     m.content("Click the button below to open the modal")
-    //         .components(|c| {
-    //             c.create_action_row(|a| {
-    //                 a.create_button(|b| {
-    //                     b.custom_id("open_modal")
-    //                         .label("Open modal")
-    //                         .style(poise::serenity_prelude::ButtonStyle::Success)
-    //                 })
-    //             })
-    //         })
-    // })
-    // .await?;
-
     Ok(())
 }
 
 /// Get hero winrate in the last 4 weeks.
 #[poise::command(slash_command)]
 async fn get_winrate(ctx: Context<'_>, name: String) -> Result<(), Error> {
-    let dota_token = &ctx.data().dota_token;
-    let endpoint = "https://api.stratz.com/graphql";
-
-    let query =
-        r#"query myQuery($id: Short) {heroStats {winWeek(heroIds: [$id]) {winCount matchCount} }}"#;
-
-    let headers: HashMap<&str, String> =
-        [("authorization", format!("Bearer {}", dota_token))].into();
-    let client = gql_client::Client::new_with_headers(endpoint, headers);
-
-    let search_index = &ctx.data().search_index;
-    let heroes = &ctx.data().heroes;
-
-    let id = if let Some(hero_id) = search_index.search(&name).first() {
-        **hero_id
-    } else {
-        ctx.say("Hero not found!").await?;
-        return Ok(());
-    };
-
-    let data = client
-        .query_with_vars::<DataGL, Var>(query, Var { id })
-        .await;
-
-    let data = data.unwrap().unwrap();
+    let query = r#"query myQuery($id: Short){
+        heroStats {
+            winWeek(heroIds: [$id]) {
+                winCount matchCount
+            }
+        }
+    }"#;
+    let (data, id) = query_stratz::<DataGL>(
+        &ctx.data().dota_token,
+        &name,
+        query,
+        &ctx.data().search_index,
+    )
+    .await?;
 
     let wins_total: f64 = data
         .heroStats
@@ -404,7 +383,7 @@ async fn get_winrate(ctx: Context<'_>, name: String) -> Result<(), Error> {
 
     ctx.say(format!(
         "> {} has {:.2}% winrate this month.",
-        heroes.get(&id).expect(
+        &ctx.data().heroes.get(&id).expect(
             r#"The result from the search should
             be an index in the heroes hashmap."#
         ),
