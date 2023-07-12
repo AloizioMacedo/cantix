@@ -1,6 +1,7 @@
 use std::{collections::HashMap, env};
 
 use ::serenity::prelude::GatewayIntents;
+use cantix::matchup;
 use chatgpt::prelude::ChatGPT;
 use indicium::simple::SearchIndex;
 use serde::{Deserialize, Serialize};
@@ -101,6 +102,149 @@ struct HeroData {
     mpRegen: f32,
     moveSpeed: f32,
     moveTurnRate: f32,
+}
+
+/// Get "best with", "best against" and "worst against".
+#[poise::command(slash_command)]
+async fn get_synergies_and_counters(ctx: Context<'_>, name: String) -> Result<(), Error> {
+    dotenvy::from_filename("Secrets.toml").unwrap();
+    let endpoint = "https://api.stratz.com/graphql";
+
+    let query_advantage = r#"query MyQuery($id: Short) {
+        heroStats {
+          matchUp(heroId: $id, orderBy: 2) {
+            with {
+              heroId2
+              winsAverage
+            }
+            vs {
+              heroId2
+              winsAverage
+            }
+          }
+        }
+      }"#;
+
+    let query_disadvantage = r#"query MyQuery($id: Short) {
+        heroStats {
+          matchUp(heroId: $id, orderBy: 3) {
+            with {
+              heroId2
+              winsAverage
+            }
+            vs {
+              heroId2
+              winsAverage
+            }
+          }
+        }
+      }"#;
+
+    let headers: HashMap<&str, String> = [(
+        "authorization",
+        format!("Bearer {}", env::var("DOTA_API").unwrap()),
+    )]
+    .into();
+
+    let client = gql_client::Client::new_with_headers(endpoint, headers);
+
+    let search_index = &ctx.data().search_index;
+    let heroes = &ctx.data().heroes;
+
+    let id = if let Some(hero_id) = search_index.search(&name).first() {
+        **hero_id
+    } else {
+        ctx.say("Hero not found!").await?;
+        return Ok(());
+    };
+
+    let data_advantage = client
+        .query_with_vars::<matchup::HeroQuery, Var>(query_advantage, Var { id })
+        .await;
+    let data_disadvantage = client
+        .query_with_vars::<matchup::HeroQuery, Var>(query_disadvantage, Var { id })
+        .await;
+
+    let data_advantage = data_advantage.unwrap().unwrap();
+    let data_disadvantage = data_disadvantage.unwrap().unwrap();
+
+    let hero = data_advantage.heroStats.matchUp.into_iter().next().unwrap();
+    let hero_disadvantage = data_disadvantage
+        .heroStats
+        .matchUp
+        .into_iter()
+        .next()
+        .unwrap();
+
+    let mut vs = hero.vs.clone();
+    let mut with = hero.with;
+    let mut counters = hero_disadvantage.vs;
+
+    vs.sort_by(|x, y| x.winsAverage.partial_cmp(&y.winsAverage).unwrap().reverse());
+    with.sort_by(|x, y| x.winsAverage.partial_cmp(&y.winsAverage).unwrap().reverse());
+    counters.sort_by(|x, y| x.winsAverage.partial_cmp(&y.winsAverage).unwrap());
+
+    let vs = &vs[0..5];
+    let with = &with[0..5];
+    let counters = &counters[0..5];
+
+    ctx.say(format!(
+        "
+        > # {}
+        > ## Best with
+        > {}: {:.1}
+        > {}: {:.1}
+        > {}: {:.1}
+        > {}: {:.1}
+        > {}: {:.1}
+        > ## Best against
+        > {}: {:.1}
+        > {}: {:.1}
+        > {}: {:.1}
+        > {}: {:.1}
+        > {}: {:.1}
+        > ## Worst against
+        > {}: {:.1}
+        > {}: {:.1}
+        > {}: {:.1}
+        > {}: {:.1}
+        > {}: {:.1}
+        ",
+        heroes.get(&id).unwrap(),
+        heroes.get(&with[0].heroId2).unwrap(),
+        with[0].winsAverage * 100.,
+        heroes.get(&with[1].heroId2).unwrap(),
+        with[1].winsAverage * 100.,
+        heroes.get(&with[2].heroId2).unwrap(),
+        with[2].winsAverage * 100.,
+        heroes.get(&with[3].heroId2).unwrap(),
+        with[3].winsAverage * 100.,
+        heroes.get(&with[4].heroId2).unwrap(),
+        with[4].winsAverage * 100.,
+        heroes.get(&vs[0].heroId2).unwrap(),
+        vs[0].winsAverage * 100.,
+        heroes.get(&vs[1].heroId2).unwrap(),
+        vs[1].winsAverage * 100.,
+        heroes.get(&vs[2].heroId2).unwrap(),
+        vs[2].winsAverage * 100.,
+        heroes.get(&vs[3].heroId2).unwrap(),
+        vs[3].winsAverage * 100.,
+        heroes.get(&vs[4].heroId2).unwrap(),
+        vs[4].winsAverage * 100.,
+        heroes.get(&counters[0].heroId2).unwrap(),
+        counters[0].winsAverage * 100.,
+        heroes.get(&counters[1].heroId2).unwrap(),
+        counters[1].winsAverage * 100.,
+        heroes.get(&counters[2].heroId2).unwrap(),
+        counters[2].winsAverage * 100.,
+        heroes.get(&counters[3].heroId2).unwrap(),
+        counters[3].winsAverage * 100.,
+        heroes.get(&counters[4].heroId2).unwrap(),
+        counters[4].winsAverage * 100.,
+    ))
+    .await?;
+
+    Ok(())
 }
 
 /// Get hero static data.
@@ -306,7 +450,12 @@ async fn poise(#[shuttle_secrets::Secrets] secret_store: SecretStore) -> Shuttle
 
     let framework = poise::Framework::builder()
         .options(poise::FrameworkOptions {
-            commands: vec![hello(), get_winrate(), get_hero()],
+            commands: vec![
+                hello(),
+                get_winrate(),
+                get_hero(),
+                get_synergies_and_counters(),
+            ],
             ..Default::default()
         })
         .token(&discord_token)
