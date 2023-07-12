@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use ::serenity::prelude::GatewayIntents;
-use cantix::matchup;
+use cantix::{constanthero, matchup, winrate};
 use chatgpt::prelude::ChatGPT;
 use indicium::simple::SearchIndex;
 use serde::{Deserialize, Serialize};
@@ -46,63 +46,6 @@ async fn ask_gpt(ctx: Context<'_>, prompt: String) -> Result<(), Error> {
     ctx.say(&response.message().content).await?;
 
     Ok(())
-}
-
-#[derive(Deserialize, Debug)]
-#[allow(non_snake_case)]
-struct DataGL {
-    heroStats: HeroStats,
-}
-
-#[derive(Deserialize, Debug)]
-#[allow(non_snake_case)]
-struct HeroStats {
-    winWeek: Vec<HeroWinCount>,
-}
-
-#[derive(Deserialize, Debug)]
-#[allow(non_snake_case)]
-struct HeroWinCount {
-    winCount: f64,
-    matchCount: f64,
-}
-
-#[derive(Deserialize, Debug)]
-#[allow(non_snake_case)]
-struct ConstantGL {
-    constants: ConstantQuery,
-}
-#[derive(Deserialize, Debug)]
-#[allow(non_snake_case)]
-struct ConstantQuery {
-    hero: HeroConstantQuery,
-}
-#[derive(Deserialize, Debug)]
-#[allow(non_snake_case)]
-struct HeroConstantQuery {
-    stats: HeroData,
-}
-
-#[derive(Deserialize, Debug)]
-#[allow(non_snake_case)]
-struct HeroData {
-    attackType: String,
-    startingArmor: f32,
-    startingDamageMin: f32,
-    startingDamageMax: f32,
-    attackRate: f32,
-    attackRange: f32,
-    primaryAttribute: String,
-    strengthBase: u16,
-    strengthGain: f32,
-    intelligenceBase: u16,
-    intelligenceGain: f32,
-    agilityBase: u16,
-    agilityGain: f32,
-    hpRegen: f32,
-    mpRegen: f32,
-    moveSpeed: f32,
-    moveTurnRate: f32,
 }
 
 async fn query_stratz<T>(
@@ -293,7 +236,7 @@ async fn get_hero(ctx: Context<'_>, name: String) -> Result<(), Error> {
               }
             }
           }"#;
-    let (data, id) = query_stratz::<ConstantGL>(
+    let (data, id) = query_stratz::<constanthero::ConstantGL>(
         &ctx.data().dota_token,
         &name,
         query,
@@ -358,7 +301,7 @@ async fn get_winrate(ctx: Context<'_>, name: String) -> Result<(), Error> {
             }
         }
     }"#;
-    let (data, id) = query_stratz::<DataGL>(
+    let (data, id) = query_stratz::<winrate::DataGL>(
         &ctx.data().dota_token,
         &name,
         query,
